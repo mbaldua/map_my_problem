@@ -3,16 +3,17 @@
 /**
  * ReportFlow — multi-step report wizard.
  *
- * New step order (photo-first):
- *   1. Photo  — camera opens, snap the problem
- *   2. Category — tag what you just photographed
- *   3. Location — confirm / drag pin
- *   4. Note (optional) — add context, then submit
+ * Step order (photo-first):
+ *   1. Photo    — camera auto-opens; Call A fires in background
+ *   2. Category — tag what you shot; Call A result shown here
+ *   3. Location — confirm/drag pin; Call B fires in background
+ *   4. Note     — pre-filled from Call B; submit
  *
  * See: docs/ux-flow.md — Flow 2
+ *      docs/gemini-image-verification.md
  */
 
-import { useState } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import { X, ChevronLeft } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAppStore } from '@/store/appStore'
@@ -22,6 +23,8 @@ import { CategoryPicker } from './CategoryPicker'
 import { LocationConfirm } from './LocationConfirm'
 import { NoteInput } from './NoteInput'
 import { REPORT_CONFIG } from '@/config/report'
+import type { VerifyImageResult } from '@/app/api/verify-image/route'
+import type { DescribeImageResult } from '@/app/api/describe-image/route'
 import type { IssueCategory, LatLng } from '@/types'
 
 type Step = 'photo' | 'category' | 'location' | 'note' | 'success'
@@ -39,10 +42,28 @@ interface ReportFlowProps {
   onClose: () => void
 }
 
+/** Convert a File to base64 string for the API. */
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
 export function ReportFlow({ onClose }: ReportFlowProps) {
   const [step, setStep] = useState<Step>('photo')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+
+  // Gemini Call A result — available by the time user finishes picking category
+  const [verifyResult, setVerifyResult] = useState<VerifyImageResult | null>(null)
+  // Gemini Call B result — available by the time user finishes location confirm
+  const [describeResult, setDescribeResult] = useState<DescribeImageResult | null>(null)
+  // Track in-flight calls so we don't fire duplicates
+  const verifyInFlight = useRef(false)
+  const describeInFlight = useRef(false)
 
   const reportDraft = useAppStore((s) => s.reportDraft)
   const setField = useAppStore((s) => s.setReportDraftField)
@@ -54,10 +75,74 @@ export function ReportFlow({ onClose }: ReportFlowProps) {
 
   const currentIndex = STEP_ORDER.indexOf(step)
 
+  // ── Call A — fires after photo confirmed ────────────────────────────────────
+
+  const runVerify = useCallback(async (photo: File) => {
+    if (verifyInFlight.current) return
+    verifyInFlight.current = true
+    try {
+      const base64 = await fileToBase64(photo)
+      const res = await fetch('/api/verify-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64 }),
+      })
+      if (res.ok) setVerifyResult(await res.json())
+    } catch {
+      // fail open — verifyResult stays null
+    } finally {
+      verifyInFlight.current = false
+    }
+  }, [])
+
+  // ── Call B — fires after category selected ──────────────────────────────────
+
+  const runDescribe = useCallback(async (photo: File, category: IssueCategory) => {
+    if (describeInFlight.current) return
+    describeInFlight.current = true
+    try {
+      const base64 = await fileToBase64(photo)
+      const res = await fetch('/api/describe-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64, category }),
+      })
+      if (res.ok) setDescribeResult(await res.json())
+    } catch {
+      // fail open — describeResult stays null
+    } finally {
+      describeInFlight.current = false
+    }
+  }, [])
+
+  // ── Step navigation ─────────────────────────────────────────────────────────
+
+  function handlePhotosConfirmed(photos: File[]) {
+    setField('photos', photos)
+    // Fire Call A immediately — runs while user is on category screen
+    if (photos[0]) runVerify(photos[0])
+    setStep('category')
+  }
+
+  function handleCategorySelect(category: IssueCategory) {
+    setField('category', category)
+    // Fire Call B immediately — runs while user is on location screen
+    if (reportDraft.photos[0]) runDescribe(reportDraft.photos[0], category)
+    setStep('location')
+  }
+
+  function handleLocationConfirmed(location: LatLng, address: string | null) {
+    setField('location', location)
+    setField('address', address)
+    setStep('note')
+  }
+
   function goBack() {
     if (currentIndex > 0) setStep(STEP_ORDER[currentIndex - 1])
     else onClose()
   }
+
+  // ── Submit ──────────────────────────────────────────────────────────────────
 
   async function handleSubmit(description: string) {
     if (!reportDraft.category || !reportDraft.location) return
@@ -153,7 +238,6 @@ export function ReportFlow({ onClose }: ReportFlowProps) {
           {STEP_LABELS[step]}
         </span>
 
-        {/* Progress dots */}
         <div className="flex gap-1.5" aria-label={`Step ${currentIndex + 1} of ${STEP_ORDER.length}`}>
           {STEP_ORDER.map((s, i) => (
             <div
@@ -172,35 +256,35 @@ export function ReportFlow({ onClose }: ReportFlowProps) {
 
       {/* Step content */}
       <div className="flex-1 overflow-y-auto">
+
         {step === 'photo' && (
           <PhotoCapture
             photos={reportDraft.photos}
             onPhotosChange={(photos) => setField('photos', photos)}
-            onNext={() => setStep('category')}
+            onNext={handlePhotosConfirmed}
           />
         )}
+
         {step === 'category' && (
           <CategoryPicker
             selectedPhoto={reportDraft.photos[0] ?? null}
-            onSelect={(cat: IssueCategory) => {
-              setField('category', cat)
-              setStep('location')
-            }}
+            verifyResult={verifyResult}
+            onSelect={handleCategorySelect}
           />
         )}
+
         {step === 'location' && (
           <LocationConfirm
             initialLocation={userLocation}
-            onConfirm={(loc, addr) => {
-              setField('location', loc)
-              setField('address', addr)
-              setStep('note')
-            }}
+            onConfirm={handleLocationConfirmed}
           />
         )}
+
         {step === 'note' && (
           <NoteInput
-            initialValue={reportDraft.description}
+            initialValue={describeResult?.description ?? ''}
+            suggestedQuestions={describeResult?.suggested_questions ?? []}
+            hasSensitiveContent={describeResult?.has_sensitive_content ?? false}
             onSubmit={handleSubmit}
             isSubmitting={isSubmitting}
           />

@@ -18,7 +18,7 @@ import { REPORT_CONFIG } from '@/config/report'
 interface PhotoCaptureProps {
   photos: File[]
   onPhotosChange: (photos: File[]) => void
-  onNext: () => void
+  onNext: (photos: File[]) => void
 }
 
 export function PhotoCapture({ photos, onPhotosChange, onNext }: PhotoCaptureProps) {
@@ -168,7 +168,7 @@ export function PhotoCapture({ photos, onPhotosChange, onNext }: PhotoCapturePro
 
       {/* Continue */}
       <button
-        onClick={onNext}
+        onClick={() => onNext(photos)}
         disabled={!canContinue}
         className="mt-auto mb-6 flex items-center justify-center gap-2 rounded-2xl bg-brand-primary py-3.5 text-sm font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed"
       >

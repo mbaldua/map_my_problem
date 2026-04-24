@@ -11,8 +11,10 @@
 
 import { useState } from 'react'
 import Image from 'next/image'
+import { Sparkles } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { IssueCategory } from '@/types'
+import type { VerifyImageResult } from '@/app/api/verify-image/route'
 
 const CATEGORIES: {
   value: IssueCategory
@@ -46,12 +48,17 @@ const CATEGORIES: {
 
 interface CategoryPickerProps {
   selectedPhoto: File | null
+  verifyResult: VerifyImageResult | null
   onSelect: (category: IssueCategory) => void
 }
 
-export function CategoryPicker({ selectedPhoto, onSelect }: CategoryPickerProps) {
+export function CategoryPicker({ selectedPhoto, verifyResult, onSelect }: CategoryPickerProps) {
   const [selected, setSelected] = useState<IssueCategory | null>(null)
   const photoUrl = selectedPhoto ? URL.createObjectURL(selectedPhoto) : null
+
+  const suggestedCategory = verifyResult?.detected_category as IssueCategory | undefined
+  const isValidSuggestion = suggestedCategory &&
+    ['water_logging', 'uncleanliness', 'traffic'].includes(suggestedCategory)
 
   function handleSelect(category: IssueCategory) {
     setSelected(category)
@@ -69,7 +76,21 @@ export function CategoryPicker({ selectedPhoto, onSelect }: CategoryPickerProps)
         </div>
       )}
 
-      <p className="text-xs text-gray-400 -mb-1">What kind of problem is this?</p>
+      {/* Gemini suggestion pill */}
+      {isValidSuggestion && (
+        <div className="flex items-center gap-1.5 text-xs text-brand-primary">
+          <Sparkles size={12} />
+          <span>
+            Looks like <strong>
+              {CATEGORIES.find(c => c.value === suggestedCategory)?.label}
+            </strong> — tap to confirm
+          </span>
+        </div>
+      )}
+
+      {!isValidSuggestion && (
+        <p className="text-xs text-gray-400 -mb-1">What kind of problem is this?</p>
+      )}
 
       <div className="flex flex-col gap-3">
         {CATEGORIES.map(({ value, label, emoji, color, description }) => (
