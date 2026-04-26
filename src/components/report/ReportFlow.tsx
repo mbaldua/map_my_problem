@@ -15,14 +15,12 @@
 
 import { useState, useRef, useCallback } from 'react'
 import { X, ChevronLeft } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
 import { useAppStore } from '@/store/appStore'
 import { useGeolocation } from '@/hooks/useGeolocation'
 import { PhotoCapture } from './PhotoCapture'
 import { CategoryPicker } from './CategoryPicker'
 import { LocationConfirm } from './LocationConfirm'
 import { NoteInput } from './NoteInput'
-import { REPORT_CONFIG } from '@/config/report'
 import type { VerifyImageResult } from '@/app/api/verify-image/route'
 import type { DescribeImageResult } from '@/app/api/describe-image/route'
 import type { IssueCategory, LatLng } from '@/types'
@@ -68,7 +66,6 @@ export function ReportFlow({ onClose }: ReportFlowProps) {
   const reportDraft = useAppStore((s) => s.reportDraft)
   const setField = useAppStore((s) => s.setReportDraftField)
   const resetDraft = useAppStore((s) => s.resetReportDraft)
-  const currentUser = useAppStore((s) => s.currentUser)
 
   const geo = useGeolocation()
   const userLocation: LatLng | null = geo.status === 'success' ? geo.coords : null
@@ -143,52 +140,28 @@ export function ReportFlow({ onClose }: ReportFlowProps) {
   }
 
   // ── Submit ──────────────────────────────────────────────────────────────────
+  // Submits via server-side Route Handler (no client auth required for now).
+  // Auth will be enforced in /api/submit-issue in a later milestone.
 
   async function handleSubmit(description: string) {
     if (!reportDraft.category || !reportDraft.location) return
-
-    if (!currentUser) {
-      alert('Please sign in with your phone number to submit a report.')
-      return
-    }
 
     setIsSubmitting(true)
     setSubmitError(null)
 
     try {
-      const supabase = createClient()
-      const imageUrls: string[] = []
+      const formData = new FormData()
+      formData.append('category', reportDraft.category)
+      formData.append('lat', String(reportDraft.location.lat))
+      formData.append('lng', String(reportDraft.location.lng))
+      if (reportDraft.address) formData.append('address', reportDraft.address)
+      if (description) formData.append('description', description)
+      reportDraft.photos.forEach((photo) => formData.append('photos', photo))
 
-      for (const photo of reportDraft.photos) {
-        const ext = photo.name.split('.').pop() ?? 'jpg'
-        const path = `${currentUser.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const res = await fetch('/api/submit-issue', { method: 'POST', body: formData })
+      const json = await res.json()
 
-        const { error: uploadError } = await supabase.storage
-          .from(REPORT_CONFIG.STORAGE_BUCKET)
-          .upload(path, photo, { contentType: photo.type })
-
-        if (uploadError) throw uploadError
-
-        const { data: { publicUrl } } = supabase.storage
-          .from(REPORT_CONFIG.STORAGE_BUCKET)
-          .getPublicUrl(path)
-
-        imageUrls.push(publicUrl)
-      }
-
-      const { error: insertError } = await supabase.from('issues').insert({
-        user_id: currentUser.id,
-        category: reportDraft.category,
-        lat: reportDraft.location.lat,
-        lng: reportDraft.location.lng,
-        address: reportDraft.address,
-        image_urls: imageUrls,
-        description: description || null,
-        upvotes: 0,
-        status: 'open',
-      })
-
-      if (insertError) throw insertError
+      if (!res.ok) throw new Error(json.error ?? 'Submission failed')
 
       resetDraft()
       setStep('success')
