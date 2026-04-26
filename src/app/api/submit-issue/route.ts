@@ -86,9 +86,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ id: issue.id })
 
   } catch (err) {
-    console.error('[submit-issue]', err)
+    const message = err instanceof Error ? err.message : 'Submission failed'
+    const isNetworkError = message.includes('ENOTFOUND') || message.includes('fetch failed')
+
+    console.error('[submit-issue]', message)
+
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Submission failed' },
+      {
+        error: isNetworkError
+          ? 'Cannot reach Supabase — project may be paused. Visit supabase.com/dashboard to restore it.'
+          : message,
+      },
       { status: 500 }
     )
   }

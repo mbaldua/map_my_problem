@@ -17,16 +17,17 @@ import type { Metadata } from 'next'
 import type { IssueWithMeta } from '@/types'
 
 interface PageProps {
-  params: { id: string }
+  params: Promise<{ id: string }>
 }
 
 // Generate dynamic OG meta per issue
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const { id } = await params
   const supabase = createClient()
   const { data } = await supabase
     .from('issues')
     .select('title, category, address')
-    .eq('id', params.id)
+    .eq('id', id)
     .single()
 
   if (!data) return { title: 'Issue Not Found' }
@@ -39,6 +40,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default async function IssueDetailPage({ params }: PageProps) {
+  const { id } = await params
   const supabase = createClient()
 
   // TODO: Use a view or RPC that also returns comment_count and local_upvotes
@@ -48,7 +50,7 @@ export default async function IssueDetailPage({ params }: PageProps) {
       id, user_id, category, title, description,
       lat, lng, address, image_urls, upvotes, status, created_at
     `)
-    .eq('id', params.id)
+    .eq('id', id)
     .single()
 
   if (error || !data) {
