@@ -104,12 +104,13 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'mmp-app-store',
-      // Only persist user preferences, not transient state
+      // Persist preferences + last known location (so map doesn't flash to default city)
       partialize: (state) => ({
         radiusKm: state.radiusKm,
         feedSort: state.feedSort,
         heatmapEnabled: state.heatmapEnabled,
         activeCategory: state.activeCategory,
+        userLocation: state.userLocation,
       }),
     }
   )

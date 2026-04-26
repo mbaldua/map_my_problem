@@ -17,7 +17,6 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useAppStore } from '@/store/appStore'
 import { clsx } from 'clsx'
 import type { CommentWithMeta } from '@/types'
 
@@ -34,8 +33,6 @@ export function ChatSection({ issueId }: ChatSectionProps) {
   const [newComment, setNewComment] = useState('')
   const [isPosting, setIsPosting] = useState(false)
   const [replyingTo, setReplyingTo] = useState<string | null>(null)
-
-  const currentUser = useAppStore((s) => s.currentUser)
 
   // ── Fetch comments ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -66,23 +63,25 @@ export function ChatSection({ issueId }: ChatSectionProps) {
 
   // ── Post comment ───────────────────────────────────────────────────────────
   async function handlePost() {
-    if (!newComment.trim() || !currentUser) return
+    if (!newComment.trim()) return
 
     setIsPosting(true)
-    const supabase = createClient()
 
-    const { error } = await supabase.from('comments').insert({
-      issue_id: issueId,
-      user_id: currentUser.id,
-      body: newComment.trim(),
-      parent_id: replyingTo ?? null,
-      upvotes: 0,
+    const res = await fetch('/api/post-comment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        issue_id: issueId,
+        body: newComment.trim(),
+        parent_id: replyingTo ?? null,
+      }),
     })
 
-    if (!error) {
+    if (res.ok) {
+      const posted = await res.json() as CommentWithMeta
+      setComments((prev) => [posted, ...prev])
       setNewComment('')
       setReplyingTo(null)
-      // TODO: trigger re-fetch or optimistic insert
     }
     setIsPosting(false)
   }
@@ -154,13 +153,13 @@ export function ChatSection({ issueId }: ChatSectionProps) {
           value={newComment}
           onChange={(e) => setNewComment(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handlePost()}
-          placeholder={currentUser ? 'Add to discussion…' : 'Sign in to comment'}
-          disabled={!currentUser || isPosting}
+          placeholder="Add to discussion…"
+          disabled={isPosting}
           className="flex-1 rounded-full border border-gray-200 px-4 py-2 text-sm focus:outline-none focus:border-brand-primary disabled:opacity-50"
         />
         <button
           onClick={handlePost}
-          disabled={!newComment.trim() || !currentUser || isPosting}
+          disabled={!newComment.trim() || isPosting}
           className="rounded-full bg-brand-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
         >
           Post
